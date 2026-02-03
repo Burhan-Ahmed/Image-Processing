@@ -81,14 +81,14 @@ def try_surf(moving, fixed, min_matches=12):
         kp_f, desc_f = sift.detectAndCompute(fixed, None)
 
         if desc_m is None or desc_f is None:
-            return None, False
+            return None, False, 0
 
         bf = cv2.BFMatcher(cv2.NORM_L2)
         knn = bf.knnMatch(desc_m, desc_f, k=2)
 
         good = [m for m, n in knn if m.distance < 0.75 * n.distance]
         if len(good) < min_matches:
-            return None, False
+            return None, False, 0
 
         src = np.float32([kp_m[m.queryIdx].pt for m in good])
         dst = np.float32([kp_f[m.trainIdx].pt for m in good])
@@ -373,37 +373,108 @@ def visualize_custom_point_mapping(mp, op, tform, crop_m, crop_f):
     cv2.destroyAllWindows()
 
 
+import os
+
 # -----------------------------
 # ENTRY POINT
 # -----------------------------
 if __name__ == "__main__":
 
-    dicom_mp = r"F:\Burhan\OIRRC\Data\CT03-Patient-Data-Dr.Najam\120101\Visit 5\be4207e9-a5c8-4318-8a75-89e303ba0583_3987.dcm"
-    dicom_op = r"F:\Burhan\OIRRC\Data\CT03-Patient-Data-Dr.Najam\120101\Visit 5\800126_509839_3881797_BAF_OP_0.dcm"
+    dicom_mp = r"F:\Burhan\OIRRC\Data\CT03-Patient-Data-Dr.Najam\120101\Visit 5\FAF\LBS-008-CT03-120101-IR-V5_converted\120101_203559_2451356_IR_OP_0.dcm"
+    dicom_op = r"F:\Burhan\OIRRC\Data\CT03-Patient-Data-Dr.Najam\120101\Visit 5\OCT\LBS-008-CT03-120101-OCT-V5_converted\120101_203559_2451341_fundus_0.dcm"
 
-    mp = force_2d(load_dicom_gray(dicom_mp))
-    op = force_2d(load_dicom_gray(dicom_op))
+# if __name__ == "__main__":
 
-    res = register_custom(mp, op)
+#     faf_dir = r"F:\Burhan\OIRRC\Data\CT03-Patient-Data-Dr.Najam\120101\Visit 5\FAF\LBS-008-CT03-120101-IR-V5_converted"
+#     cfp_dir = r"F:\Burhan\OIRRC\Data\CT03-Patient-Data-Dr.Najam\120101\Visit 5\OCT\LBS-008-CT03-120101-OCT-V5_converted"
 
-    print("\nCUSTOM TRANSFORM MATRIX:")
-    print(res["tform"].params)
+#     faf_files = sorted(
+#         [
+#             os.path.join(faf_dir, f)
+#             for f in os.listdir(faf_dir)
+#             if f.lower().endswith(".dcm")
+#         ]
+#     )
+#     cfp_files = sorted(
+#         [
+#             os.path.join(cfp_dir, f)
+#             for f in os.listdir(cfp_dir)
+#             if f.lower().endswith(".dcm")
+#         ]
+#     )
 
-    metrics = compute_metrics(
-        res["op_original"], res["mp_mapped"], num_features=res["num_features"]
-    )
-    print("\n=== CUSTOM REGISTRATION ===")
-    for k, v in metrics.items():
-        print(f"{k}: {v:.4f}")
+#     dbg(f"Found {len(faf_files)} FAF DICOMs")
+#     dbg(f"Found {len(cfp_files)} CFP DICOMs")
 
-    # Save all images
-    save_registration_results(res, out_dir="output")
+#     for faf_path in faf_files:
+#         for cfp_path in cfp_files:
 
-    # Optional visualization
-    visualize_custom_point_mapping(
-        res["mp_original"],
-        res["op_original"],
-        res["tform"],
-        res["crop_m"],
-        res["crop_f"],
-    )
+#             dbg("=" * 60)
+#             dbg(f"FAF: {os.path.basename(faf_path)}")
+#             dbg(f"CFP: {os.path.basename(cfp_path)}")
+
+#             try:
+#                 mp = force_2d(load_dicom_gray(faf_path))
+#                 op = force_2d(load_dicom_gray(cfp_path))
+
+#                 res = register_custom(mp, op)
+
+#                 metrics = compute_metrics(
+#                     res["op_original"],
+#                     res["mp_mapped"],
+#                     num_features=res["num_features"],
+#                 )
+
+#                 dbg(
+#                     f"SUCCESS | "
+#                     f"NMI={metrics['NMI']:.4f} | "
+#                     f"Features={res['num_features']}"
+#                 )
+
+#                 # ---- Per-pair output folder ----
+#                 pair_name = (
+#                     os.path.splitext(os.path.basename(faf_path))[0]
+#                     + "__TO__"
+#                     + os.path.splitext(os.path.basename(cfp_path))[0]
+#                 )
+#                 out_dir = os.path.join("output", pair_name)
+
+#                 save_registration_results(res, out_dir=out_dir)
+
+#             except Exception as e:
+#                 dbg(f"FAILED: {e}")
+#                 continue
+
+mp = force_2d(load_dicom_gray(dicom_mp))
+op = force_2d(load_dicom_gray(dicom_op))
+
+res = register_custom(mp, op)
+
+print("\nCUSTOM TRANSFORM MATRIX:")
+print(res["tform"].params)
+
+metrics = compute_metrics(
+    res["op_original"], res["mp_mapped"], num_features=res["num_features"]
+)
+
+NMI_THRESH = 0.09
+nmi = metrics.get("NMI", 0.0)
+
+if not np.isfinite(nmi) or nmi < NMI_THRESH:
+    raise RuntimeError(f"Registration FAILED (NMI={nmi:.4f})")
+
+print("\n=== CUSTOM REGISTRATION ===")
+for k, v in metrics.items():
+    print(f"{k}: {v:.4f}")
+
+# Save all images
+save_registration_results(res, out_dir="output")
+
+# Optional visualization
+visualize_custom_point_mapping(
+    res["mp_original"],
+    res["op_original"],
+    res["tform"],
+    res["crop_m"],
+    res["crop_f"],
+)
